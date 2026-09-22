@@ -142,7 +142,15 @@ async function handleGet(request, env) {
         try {
             const fileUrl = new URL(`/file${path}`, request.url);
 
-            const fileResponse = await fetch(fileUrl.toString());
+                       // Forward Range/conditional headers so /file/ returns 206 Partial Content.
+            // Without this, WebDAV clients (RaiDrive, rclone) can only read single-stream.
+            const forwardHeaders = {};
+            for (const h of ['Range', 'If-Range', 'If-None-Match', 'If-Modified-Since']) {
+                const v = request.headers.get(h);
+                if (v) forwardHeaders[h] = v;
+            }
+
+            const fileResponse = await fetch(fileUrl.toString(), { headers: forwardHeaders });
 
             if (!fileResponse.ok) {
                  return new Response('File not found', { status: fileResponse.status, statusText: fileResponse.statusText });
