@@ -49,7 +49,9 @@ export function isFromPublicBrowse(Referer, origin) {
 }
 
 export const FILE_CACHE_CONTROL = {
-    PUBLIC: 'public, max-age=2592000',
+    // max-age 给浏览器，s-maxage 给 Cloudflare 边缘共享缓存。
+    // 文件名带毫秒时间戳，内容不可变，因此可安全加 immutable。
+    PUBLIC: 'public, max-age=86400, s-maxage=86400, immutable',
     PRIVATE: 'private, max-age=86400',
     NO_STORE: 'private, no-store, max-age=0',
 };
@@ -59,7 +61,10 @@ export function setCommonHeaders(headers, encodedFileName, fileType, cacheContro
     headers.set('Content-Disposition', `inline; filename="${encodedFileName}"; filename*=UTF-8''${encodedFileName}`);
     headers.set('Access-Control-Allow-Origin', '*');
     headers.set('Accept-Ranges', 'bytes');
-    headers.set('Vary', 'Range');
+    // 不要把 Range 放进 Vary：Range 会进入缓存键，使每个不同的 Range 值
+    // 都成为一个独立缓存对象，边缘命中率归零，每次请求都要重新回源
+    // Telegram / HuggingFace。Cloudflare 自己能从一个缓存的 200 上切出 206。
+    headers.set('Vary', 'Accept-Encoding');
 
     if (fileType) {
         headers.set('Content-Type', fileType);
@@ -85,7 +90,7 @@ export function handleHeadRequest(headers, etag = null) {
     responseHeaders.set('Content-Disposition', headers.get('Content-Disposition') || 'inline');
     responseHeaders.set('Access-Control-Allow-Origin', headers.get('Access-Control-Allow-Origin') || '*');
     responseHeaders.set('Accept-Ranges', headers.get('Accept-Ranges') || 'bytes');
-    responseHeaders.set('Cache-Control', headers.get('Cache-Control') || 'public, max-age=2592000');
+    responseHeaders.set('Cache-Control', headers.get('Cache-Control') || FILE_CACHE_CONTROL.PUBLIC);
 
     if (etag) {
         responseHeaders.set('ETag', etag);

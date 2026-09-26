@@ -25,6 +25,12 @@ main = "index.js"
 compatibility_date = "2024-08-21"
 compatibility_flags = ["global_fetch_strictly_public"]
 
+# 开启 Workers Cache：Cloudflare 在调用 Worker 之前先查缓存，命中时直接由边缘
+# 返回响应 —— 不执行 Worker、不回源 Telegram / HuggingFace、不计 CPU 时间。
+# 是否缓存完全由响应上的 Cache-Control 决定（见 functions/file/fileTools.js）。
+[cache]
+enabled = true
+
 [assets]
 directory = "../../frontend-dist"
 binding = "ASSETS"
