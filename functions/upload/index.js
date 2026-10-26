@@ -1,3 +1,4 @@
+import { createS3Client } from '../utils/storage/s3Client.js';
 import { userAuthCheck, UnauthorizedResponse } from "../utils/auth/userAuth";
 import { fetchUploadConfig, fetchSecurityConfig, fetchPageConfig } from "../utils/sysConfig";
 import {
@@ -5,13 +6,14 @@ import {
     moderateContent, purgeCDNCache, isBlockedUploadIp, buildUniqueFileId, endUpload, getImageDimensions,
     sanitizeUploadFolder
 } from "./uploadTools";
+import { getFileTypeCategory, normalizeMimeType, resolveFileType } from "../utils/mimeTypes.js";
 import { initializeChunkedUpload, handleChunkUpload, uploadLargeFileToTelegram, handleCleanupRequest } from "./chunkUpload";
 import { handleChunkMerge } from "./chunkMerge";
 import { TelegramAPI } from "../utils/storage/telegramAPI";
 import { DiscordAPI } from "../utils/storage/discordAPI";
 import { HuggingFaceAPI } from "../utils/storage/huggingfaceAPI";
 import { WebDAVAPI } from "../utils/storage/webdavAPI";
-import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { getDatabase } from '../utils/databaseAdapter.js';
 
 
@@ -133,8 +135,11 @@ async function processFileUpload(context, formdata = null) {
     // 获取文件信息
     const time = new Date().getTime();
     const file = formdata.get('file');
-    const fileType = file.type;
     let fileName = file.name;
+    // 部分客户端（同步工具、脚本）不提供有效的 Content-Type，按扩展名兜底推断。
+    // 否则图片会被记成 application/octet-stream，导致随机图类型过滤、尺寸提取、
+    // 图片处理校验全部失效。
+    const fileType = resolveFileType(fileName, file.type);
     const fileSizeBytes = file.size; // 文件大小，单位字节
     const fileSize = (fileSizeBytes / 1024 / 1024).toFixed(2); // 文件大小，单位MB
 
@@ -145,7 +150,7 @@ async function processFileUpload(context, formdata = null) {
 
     // 提取图片尺寸
     let imageDimensions = null;
-    if (fileType.startsWith('image/')) {
+    if (getFileTypeCategory(fileType) === 'image') {
         try {
             // 统一读取 64KB，足以覆盖 JPEG 的 EXIF 数据和其他格式
             const headerBuffer = await file.slice(0, 65536).arrayBuffer();
@@ -312,7 +317,9 @@ async function uploadFileToCloudflareR2(context, fullId, metadata, returnLink) {
     const R2DataBase = env.img_r2;
 
     // 写入R2数据库
-    await R2DataBase.put(fullId, formdata.get('file'));
+    await R2DataBase.put(fullId, formdata.get('file'), {
+        httpMetadata: { contentType: metadata.FileType },
+    });
 
     // 更新metadata
     metadata.Channel = "CloudflareR2";
@@ -365,18 +372,10 @@ async function uploadFileToS3(context, fullId, metadata, returnLink) {
         return createResponse('Error: No S3 channel provided', { status: 400 });
     }
 
-    const { endpoint, pathStyle, accessKeyId, secretAccessKey, bucketName, region } = s3Channel;
+    const { bucketName } = s3Channel;
 
     // 创建 S3 客户端
-    const s3Client = new S3Client({
-        region: region || "auto", // R2 可用 "auto"
-        endpoint, // 自定义 S3 端点
-        credentials: {
-            accessKeyId,
-            secretAccessKey
-        },
-        forcePathStyle: pathStyle // 是否启用路径风格
-    });
+    const s3Client = createS3Client(s3Channel);
 
     // 获取文件
     const file = formdata.get("file");
@@ -394,7 +393,7 @@ async function uploadFileToS3(context, fullId, metadata, returnLink) {
             Bucket: bucketName,
             Key: s3FileName,
             Body: uint8Array, // 直接使用 Blob
-            ContentType: file.type
+            ContentType: metadata.FileType
         };
 
         // 执行上传
@@ -475,11 +474,11 @@ async function uploadFileToTelegram(context, fullId, metadata, fileExt, fileName
 
     // 由于TG会把gif后缀的文件转为视频，所以需要修改后缀名绕过限制
     if (fileExt === 'gif') {
-        const newFileName = fileName.replace(/\.gif$/, '.jpeg');
+        const newFileName = fileName.replace(/\.gif$/i, '.jpeg');
         const newFile = new File([formdata.get('file')], newFileName, { type: fileType });
         formdata.set('file', newFile);
     } else if (fileExt === 'webp') {
-        const newFileName = fileName.replace(/\.webp$/, '.jpeg');
+        const newFileName = fileName.replace(/\.webp$/i, '.jpeg');
         const newFile = new File([formdata.get('file')], newFileName, { type: fileType });
         formdata.set('file', newFile);
     }
@@ -494,14 +493,14 @@ async function uploadFileToTelegram(context, fullId, metadata, fileExt, fileName
 
     const defaultType = { 'url': 'sendDocument', 'type': 'document' };
 
-    let sendFunction = Object.keys(fileTypeMap).find(key => fileType.startsWith(key))
-        ? fileTypeMap[Object.keys(fileTypeMap).find(key => fileType.startsWith(key))]
-        : defaultType;
+    const mimeType = normalizeMimeType(fileType);
+    const sendType = Object.keys(fileTypeMap).find(key => mimeType.startsWith(key));
+    let sendFunction = sendType ? fileTypeMap[sendType] : defaultType;
 
     // GIF ICO 等发送接口特殊处理
-    if (fileType === 'image/gif' || fileType === 'image/webp' || fileExt === 'gif' || fileExt === 'webp') {
+    if (mimeType === 'image/gif' || mimeType === 'image/webp' || fileExt === 'gif' || fileExt === 'webp') {
         sendFunction = { 'url': 'sendAnimation', 'type': 'animation' };
-    } else if (fileType === 'image/svg+xml' || fileType === 'image/x-icon') {
+    } else if (mimeType === 'image/svg+xml' || mimeType === 'image/x-icon') {
         sendFunction = { 'url': 'sendDocument', 'type': 'document' };
     }
 
@@ -816,7 +815,7 @@ async function uploadFileToWebDAV(context, fullId, metadata, returnLink) {
 
     try {
         const webdavAPI = new WebDAVAPI(webdavChannel);
-        await webdavAPI.putFile(fullId, file, file.type || metadata.FileType || 'application/octet-stream');
+        await webdavAPI.putFile(fullId, file, metadata.FileType);
 
         metadata.Channel = "WebDAV";
         metadata.ChannelName = webdavChannel.name || "WebDAV_env";
