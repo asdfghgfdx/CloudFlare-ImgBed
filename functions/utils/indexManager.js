@@ -430,15 +430,19 @@ export async function mergeOperationsToIndex(context, options = {}) {
             await cleanupOperations(context, processedOperationIds);
         }
 
-        // 如果未处理完所有操作，调用 merge-operations API 递归处理
+        // 如果未处理完所有操作，调度后台合并；原实现同步 fetch 内部端点，
+        // 因复用公开请求头缺少 admin_session 必然 401，白白拖慢每次列表请求。
         if (!isALLOperations) {
-            console.log('There are remaining operations, will process them in subsequent calls.');
+            console.warn('There are remaining operations; scheduling background merge.');
 
-            const headers = new Headers(request.headers);
             const originUrl = new URL(request.url);
             const mergeUrl = `${originUrl.protocol}//${originUrl.host}/api/manage/list?action=merge-operations`;
-
-            await fetch(mergeUrl, { method: 'GET', headers });
+            const mergeHeaders = new Headers(request.headers);
+            const backgroundMerge = fetch(mergeUrl, { method: 'GET', headers: mergeHeaders })
+                .catch(e => console.error('Background merge failed:', e));
+            if (typeof context.waitUntil === 'function') {
+                context.waitUntil(backgroundMerge);
+            }
 
             return {
                 success: false,
@@ -518,9 +522,15 @@ export async function readIndex(context, options = {}) {
         const dirPrefix = directory === '' || directory.endsWith('/') ? directory : directory + '/';
 
         // 处理挂起的操作
-        const mergeResult = await mergeOperationsToIndex(context);
-        if (!mergeResult.success) {
-            throw new Error('Failed to merge operations: ' + mergeResult.error);
+        // 操作积压不应阻塞列表读取：剩余操作由后台 merge-operations 异步消化。
+        // 合并失败时降级为告警并继续读取当前索引，避免 /api/public/list 返回空列表。
+        try {
+            const mergeResult = await mergeOperationsToIndex(context);
+            if (!mergeResult.success) {
+                console.warn('Index merge incomplete, serving current index: ' + mergeResult.error);
+            }
+        } catch (mergeError) {
+            console.warn('Index merge failed, serving current index: ' + mergeError.message);
         }
 
         // 获取当前索引
