@@ -40,8 +40,9 @@
 import { getDatabase, checkDatabaseConfig } from './databaseAdapter.js';
 import { getFileTypeCategory } from './mimeTypes.js';
 
-const INDEX_KEY = 'manage@index';
-const INDEX_META_KEY = 'manage@index@meta'; // 索引元数据键
+// 索引存储键（v2 命名空间：旧键 manage@index* 的 D1 行写入额度已耗尽，换键以恢复写入能力）
+const INDEX_KEY = 'manage@indexv2';
+const INDEX_META_KEY = 'manage@indexv2@meta'; // 索引元数据键
 const OPERATION_KEY_PREFIX = 'manage@index@operation_';
 // D1 单字段限制 2MB，KV 限制 25MB，根据数据库类型动态设置
 const INDEX_CHUNK_SIZE_D1 = 500; // D1 数据库分块大小
