@@ -16,9 +16,9 @@ const corsHeaders = {
   'Access-Control-Max-Age': '86400',
 };
 
-// 索引存储键
-const INDEX_KEY = 'manage@index';
-const INDEX_META_KEY = 'manage@index@meta';
+// 索引存储键（v2 命名空间，与 indexManager.js 保持一致）
+const INDEX_KEY = 'manage@indexv2';
+const INDEX_META_KEY = 'manage@indexv2@meta';
 // D1 单字段限制 2MB，KV 限制 25MB，根据数据库类型动态设置
 const INDEX_CHUNK_SIZE_D1 = 500; // D1 数据库分块大小
 const INDEX_CHUNK_SIZE_KV = 5000; // KV 存储分块大小
