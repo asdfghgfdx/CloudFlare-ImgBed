@@ -76,6 +76,11 @@ function isIndexRelatedKey(key) {
     return true;
   }
 
+  // 匹配 v2 命名空间索引键（manage@indexv2, manage@indexv2_*, manage@indexv2@*）
+  if (key === 'manage@indexv2' || key.startsWith('manage@indexv2_') || key.startsWith('manage@indexv2@')) {
+    return true;
+  }
+
   // 匹配会话数据键 (manage@session@*)
   if (key.startsWith('manage@session@')) {
     return true;
