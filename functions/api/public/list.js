@@ -6,6 +6,9 @@ import { fetchOthersConfig } from "../../utils/sysConfig";
 import { readIndex } from '../../utils/indexManager.js';
 
 // CORS 跨域响应头
+// 公开列表缓存版本：索引重建或结构变更时递增，可一次性废弃全部旧缓存
+const PUBLIC_LIST_CACHE_VERSION = 'indexv2';
+
 const corsHeaders = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, OPTIONS',
@@ -61,8 +64,9 @@ function isAllowedDirectory(dir, allowedDirs) {
  */
 async function getPublicFileList(context, url, dir, recursive) {
     // 构建缓存键（目录格式去掉末尾的/，与清除缓存时的格式一致）
+    // 缓存键携带索引版本号：索引结构变更时可整体废弃旧缓存，无需逐目录清理
     const cacheDir = dir.replace(/\/$/, '');
-    const cacheKey = `${url.origin}/api/publicFileList?dir=${cacheDir}&recursive=${recursive}`;
+    const cacheKey = `${url.origin}/api/publicFileList?dir=${cacheDir}&recursive=${recursive}&v=${PUBLIC_LIST_CACHE_VERSION}`;
 
     // 检查缓存中是否有记录
     const cache = caches.default;
